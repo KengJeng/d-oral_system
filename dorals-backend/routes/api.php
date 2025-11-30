@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\LoginHistoryController;
 use App\Http\Controllers\Api\PatientController;
 use App\Http\Controllers\Api\QueueController;
 use App\Http\Controllers\Api\ServiceController;
@@ -21,6 +22,12 @@ Route::get('/services', [ServiceController::class, 'index']);
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Login History (admin only)
+    Route::get('/login-history', [LoginHistoryController::class, 'index']);
+
+    // Admin creates walk-in appointment (admin check will be inside controller)
+    Route::post('/admin/appointments', [AppointmentController::class, 'adminStore']);
 
     // Appointments
     Route::get('/appointments/my', [AppointmentController::class, 'myAppointments']);
@@ -44,6 +51,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Analytics
     Route::get('/analytics/appointments', [AnalyticsController::class, 'appointments']);
     Route::get('/analytics/demographics', [AnalyticsController::class, 'demographics']);
+    Route::get('/analytics/appointments/forecast', [AnalyticsController::class, 'appointmentsForecast']);
 
     // Queue Management
     Route::get('/queue/next', [QueueController::class, 'getNext']);

@@ -29,6 +29,28 @@ class Appointment extends Model
         return $this->belongsTo(Patient::class, 'patient_id', 'patient_id');
     }
 
+
+    public function createdByAdmin()
+    {
+        return $this->belongsTo(Admin::class, 'created_by', 'admin_id');
+    }   
+
+    public function updatedByAdmin()
+    {
+        return $this->belongsTo(Admin::class, 'updated_by', 'admin_id');
+    }
+
+    public function appointmentsCreated()
+    {
+        return $this->hasMany(Appointment::class, 'created_by', 'admin_id');
+    }
+
+    public function appointmentsUpdated()
+    {
+        return $this->hasMany(Appointment::class, 'updated_by', 'admin_id');
+    }
+
+
     public function services()
     {
         return $this->belongsToMany(

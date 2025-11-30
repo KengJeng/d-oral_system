@@ -1,10 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AdminReportController;
 
-Route::get('/', function () {
-    return view('welcome');
-});
 
 // Redirect root to patient login
 Route::get('/', function () {
@@ -32,7 +30,7 @@ Route::prefix('admin')->group(function () {
         return view('admin.login');
     })->name('admin.login');
 
-    Route::get('/dashboard', function () {
-        return view('admin.dashboard');
-    })->name('admin.dashboard');
+        Route::get('/dashboard', [AdminReportController::class, 'index'])
+    ->name('admin.dashboard');
+
 });

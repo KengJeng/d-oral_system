@@ -3,10 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Patient;
 use App\Models\Admin;
+use App\Models\Patient;
 use App\Services\AuditLogService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -63,7 +64,7 @@ class AuthController extends Controller
 
         $patient = Patient::where('email', $request->email)->first();
 
-        if (!$patient || !Hash::check($request->password, $patient->password)) {
+        if (! $patient || ! Hash::check($request->password, $patient->password)) {
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -71,7 +72,20 @@ class AuthController extends Controller
 
         $token = $patient->createToken('patient-token')->plainTextToken;
 
-        $this->auditLog->log($patient->patient_id, 'Patient logged in');
+        // LOGIN HISTORY: record patient login
+        DB::table('login_history')->insert([
+            'user_id' => $patient->patient_id,
+            'user_type' => 'patient',
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            // login_time will use CURRENT_TIMESTAMP by default
+        ]);
+
+        // AUDIT LOG: keep this, but user_id should be NULL (patient, not admin)
+        $this->auditLog->log(
+            null,
+            "Patient logged in: #{$patient->patient_id}"
+        );
 
         return response()->json([
             'message' => 'Login successful',
@@ -89,7 +103,7 @@ class AuthController extends Controller
 
         $admin = Admin::where('email', $request->email)->first();
 
-        if (!$admin || !Hash::check($request->password, $admin->password)) {
+        if (! $admin || ! Hash::check($request->password, $admin->password)) {
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -97,7 +111,19 @@ class AuthController extends Controller
 
         $token = $admin->createToken('admin-token')->plainTextToken;
 
-        $this->auditLog->log($admin->admin_id, 'Admin logged in');
+        // LOGIN HISTORY: record admin login
+        DB::table('login_history')->insert([
+            'user_id' => $admin->admin_id,
+            'user_type' => 'admin',
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ]);
+
+        // AUDIT LOG: this one uses admin_id (FK to admin table)
+        $this->auditLog->log(
+            $admin->admin_id,
+            "Admin logged in: #{$admin->admin_id}"
+        );
 
         return response()->json([
             'message' => 'Login successful',
@@ -110,7 +136,7 @@ class AuthController extends Controller
     {
         $user = $request->user();
         $this->auditLog->log($user->getKey(), 'User logged out');
-        
+
         $request->user()->currentAccessToken()->delete();
 
         return response()->json([

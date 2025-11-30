@@ -179,23 +179,34 @@ class AnalyticsController extends Controller
     }
     
     private function getBarangayDistribution()
-    {
-        $barangays = Patient::selectRaw('SUBSTRING_INDEX(address, ",", 1) as barangay, COUNT(*) as count')
-            ->groupBy('barangay')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get();
-        
-        $labels = [];
-        $values = [];
-        
-        foreach ($barangays as $brgy) {
-            $labels[] = str_replace('Barangay ', 'Brgy. ', trim($brgy->barangay));
-            $values[] = $brgy->count;
-        }
-        
-        return ['labels' => $labels, 'values' => $values];
+{
+    $barangays = Patient::selectRaw("
+            CASE 
+                WHEN address IS NULL OR address = '' THEN 'Unknown'
+                WHEN LOCATE(',', address) = 0 THEN TRIM(address)
+                ELSE SUBSTRING_INDEX(address, ',', 1)
+            END as barangay,
+            COUNT(*) as count
+        ")
+        ->groupBy('barangay')
+        ->orderByDesc('count')
+        ->limit(10)
+        ->get();
+
+    $labels = [];
+    $values = [];
+
+    foreach ($barangays as $brgy) {
+        $labels[] = str_replace('Barangay ', 'Brgy. ', trim($brgy->barangay));
+        $values[] = $brgy->count;
     }
+
+    return [
+        'labels' => $labels,
+        'values' => $values
+    ];
+}
+
     
     private function getPatientGrowth()
     {
@@ -217,23 +228,116 @@ class AnalyticsController extends Controller
     }
     
     private function getServiceUtilization()
+{
+    // Ensure these match your actual table names
+    $servicesTable = 'services';
+    $pivotTable = 'appointment_services'; // adjust if needed
+
+    $services = DB::table($servicesTable)
+        ->leftJoin($pivotTable, $servicesTable . '.service_id', '=', $pivotTable . '.service_id')
+        ->select(
+            $servicesTable . '.name',
+            DB::raw('COUNT(' . $pivotTable . '.service_id) as count')
+        )
+        ->groupBy($servicesTable . '.service_id', $servicesTable . '.name')
+        ->orderByDesc('count')
+        ->limit(10)
+        ->get();
+
+    $labels = [];
+    $values = [];
+
+    foreach ($services as $service) {
+        $labels[] = $service->name;
+        $values[] = $service->count;
+    }
+
+    return [
+        'labels' => $labels,
+        'values' => $values,
+    ];
+}
+
+
+    public function appointmentsForecast(Request $request)
     {
-        $services = DB::table('service')
-            ->leftJoin('appointment_service', 'service.service_id', '=', 'appointment_service.service_id')
-            ->select('service.name', DB::raw('COUNT(appointment_service.service_id) as count'))
-            ->groupBy('service.service_id', 'service.name')
-            ->orderByDesc('count')
-            ->limit(10)
+        $today = Carbon::today();
+        $startDate = $today->copy()->subDays(90);
+
+        // 1. Historical counts per day (last 90 days, excluding canceled / no-show)
+        $historical = Appointment::select(
+                DB::raw('DATE(scheduled_date) as date'),
+                DB::raw('COUNT(*) as count')
+            )
+            ->whereDate('scheduled_date', '>=', $startDate)
+            ->whereDate('scheduled_date', '<=', $today)
+            ->whereNotIn('status', ['Canceled', 'No-show']) // adjust if needed
+            ->groupBy(DB::raw('DATE(scheduled_date)'))
+            ->orderBy('date', 'asc')
             ->get();
-        
-        $labels = [];
-        $values = [];
-        
-        foreach ($services as $service) {
-            $labels[] = $service->name;
-            $values[] = $service->count;
+
+        // 2. Build weekday statistics (Mon..Sun => average count)
+        // weekday: 1=Monday ... 7=Sunday
+        $weekdayCounts = [];
+        $weekdayTotals = [];
+        $weekdayDays = [];
+
+        foreach ($historical as $row) {
+            $date = Carbon::parse($row->date);
+            $weekday = $date->dayOfWeekIso; // 1..7
+
+            if (!isset($weekdayTotals[$weekday])) {
+                $weekdayTotals[$weekday] = 0;
+                $weekdayDays[$weekday] = 0;
+            }
+
+            $weekdayTotals[$weekday] += $row->count;
+            $weekdayDays[$weekday] += 1;
         }
-        
-        return ['labels' => $labels, 'values' => $values];
+
+        $weekdayAverages = [];
+        for ($w = 1; $w <= 7; $w++) {
+            if (!empty($weekdayDays[$w])) {
+                $weekdayAverages[$w] = round($weekdayTotals[$w] / $weekdayDays[$w], 2);
+            } else {
+                // If no data for that weekday, fallback to global average
+                $weekdayAverages[$w] = $historical->avg('count') ?: 0;
+            }
+        }
+
+        // 3. Build next 7 days forecast
+        $forecastDays = 7;
+        $forecastLabels = [];
+        $forecastValues = [];
+
+        for ($i = 1; $i <= $forecastDays; $i++) {
+            $date = $today->copy()->addDays($i);
+            $weekday = $date->dayOfWeekIso;
+            $forecastLabels[] = $date->toDateString();
+            $forecastValues[] = (float) ($weekdayAverages[$weekday] ?? 0);
+        }
+
+        // 4. Prepare historical for chart (last 30 days for nicer display)
+        $historicalForChart = $historical->filter(function ($row) use ($today) {
+                return Carbon::parse($row->date)->greaterThanOrEqualTo($today->copy()->subDays(30));
+            })
+            ->values();
+
+        $historicalLabels = $historicalForChart->pluck('date')->map(function ($d) {
+            return Carbon::parse($d)->toDateString();
+        })->toArray();
+
+        $historicalValues = $historicalForChart->pluck('count')->map(fn($c) => (int) $c)->toArray();
+
+        return response()->json([
+            'historical' => [
+                'labels' => $historicalLabels,
+                'values' => $historicalValues,
+            ],
+            'forecast' => [
+                'labels' => $forecastLabels,
+                'values' => $forecastValues,
+            ],
+        ]);
     }
 }
